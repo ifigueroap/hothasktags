@@ -22,6 +22,9 @@ type LineInfo = Map.Map FilePath (A.Array Int (HandlePosition, String))
 data Defn = Defn FilePath Int Int -- file, line, end col
     deriving Show
 
+importedModules :: L.Module L.SrcSpanInfo -> Map.Map String Defn
+importedModules (L.Module _ _ _ importDecls _) = undefined
+
 localDecls :: L.Module L.SrcSpanInfo -> Map.Map String Defn
 localDecls (L.Module _ _ _ _ decls) = Map.fromList $ concatMap extract decls
     where
@@ -34,9 +37,13 @@ localDecls (L.Module _ _ _ _ decls) = Map.fromList $ concatMap extract decls
     extract (L.DataFamDecl _ _ hd _) = extractDeclHead hd
     extract (L.ClassDecl _ _ hd _ clsdecls) =
       extractDeclHead hd ++ concatMap extractClassDecl (fromMaybe [] clsdecls)
-    extract (L.TypeSig _ names _) = concatMap extractName names
+
+    -- AT LEAST HERE: ENHANCED EXTRACTION OF TAGS
+    extract (L.TypeSig _ names _) = concatMap extractName names    
     extract (L.FunBind _ (L.Match _ name _ _ _ : _)) = extractName name
     extract (L.FunBind _ (L.InfixMatch _ _ name _ _ _ : _)) = extractName name
+    -- TODO: CHECK OTHER KINDS OF DECLARATIONS: CLASS, TYPE, TYPEFAM, ETC... 
+    
     extract (L.PatBind _ pat _ _) = extractPat pat
     extract (L.ForImp _ _ _ _ name _) = extractName name
     extract _ = []
