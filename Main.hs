@@ -22,9 +22,6 @@ type LineInfo = Map.Map FilePath (A.Array Int (HandlePosition, String))
 data Defn = Defn FilePath Int Int -- file, line, end col
     deriving Show
 
-importedModules :: L.Module L.SrcSpanInfo -> Map.Map String Defn
-importedModules (L.Module _ _ _ importDecls _) = undefined
-
 localDecls :: L.Module L.SrcSpanInfo -> Map.Map String Defn
 localDecls (L.Module _ _ _ _ decls) = Map.fromList $ concatMap extract decls
     where
