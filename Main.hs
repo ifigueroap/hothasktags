@@ -11,10 +11,12 @@ import qualified Language.Preprocessor.Cpphs as CPP
 import Control.Exception (ErrorCall(..), catch, evaluate)
 import System.Exit (exitFailure)
 import Control.Monad
+import Control.Monad.Extra (concatMapM)
 import qualified Data.Array.Unboxed as A
 import Data.List (sort)
 import Data.Maybe (fromMaybe, catMaybes, maybeToList)
 import Data.List.Split (endBy)
+import Data.List.Extra (groupSort)
 import Prelude hiding (exp)
 
 type Database = Map.Map String (L.Module L.SrcSpanInfo)
@@ -23,8 +25,8 @@ type LineInfo = Map.Map FilePath (A.Array Int (HandlePosition, String))
 data Defn = Defn FilePath Int Int -- file, line, end col
     deriving Show
 
-localDecls :: L.Module L.SrcSpanInfo -> Map.Map String Defn
-localDecls (L.Module _ _ _ _ decls) = Map.fromList $ concatMap extract decls
+localDecls :: L.Module L.SrcSpanInfo -> Map.Map String [Defn]
+localDecls (L.Module _ _ _ _ decls) = Map.fromList $ groupSort $ concatMap extract decls
     where
       -- TODO: CHECK OTHER KINDS OF DECLARATIONS: CLASS, TYPE, TYPEFAM, ETC...
     extract (L.TypeDecl _ hd _) = extractDeclHead hd
@@ -43,10 +45,6 @@ localDecls (L.Module _ _ _ _ decls) = Map.fromList $ concatMap extract decls
     -- extracts the name of the function and then the names of called functions
     extract (L.FunBind _ matches@(L.Match _ name _ _ _ : _)) = extractName name ++ concatMap extractMatch matches
     extract (L.FunBind _ matches@(L.InfixMatch _ _ name _ _ _ : _)) = extractName name ++ concatMap extractMatch matches
-
-    -- extract (L.FunBind _ (L.Match _ name _ _ _ : _)) = extractName name
-    -- extract (L.FunBind _ (L.InfixMatch _ _ name _ _ _ : _)) = extractName name
-
     extract (L.PatBind _ pat _ _) = extractPat pat
     extract (L.ForImp _ _ _ _ name _) = extractName name
     extract _ = []
@@ -172,17 +170,50 @@ localDecls (L.Module _ _ _ _ decls) = Map.fromList $ concatMap extract decls
     extractSplice (L.ParenSplice _ exp) = extractExp exp    
 
     -- TODO: IMPLEMENT
-    extractType (L.TyForall _ _ _ _) = []
-    extractType (L.TyFun _ _ _) = []
-    extractType (L.TyTuple _ _ _) = []
-    extractType (L.TyList  _ _) = []
-    extractType (L.TyApp _ _ _) = []
-    extractType (L.TyVar _ _) = []
-    extractType (L.TyCon _ _) = []
-    extractType (L.TyParen _ _) = []
-    extractType (L.TyInfix _ _ _ _) = []
-    extractType (L.TyKind _ _ _) = []
-    extractType _ = []
+    extractType (L.TyVar _ _name) = [] -- NOT CONSIDERING NAMES OF TYPE VARIABLES
+    extractType (L.TyCon _ qname) = extractQName qname
+    extractType (L.TyForall _ _maybeTyVarBinds maybeContext typ) =
+      concatMap extractContext (maybeToList maybeContext) ++ extractType typ
+    extractType (L.TyFun _ argTyp resTyp) = concatMap extractType [argTyp, resTyp]
+    extractType (L.TyTuple _ _ typs) = concatMap extractType typs
+    extractType (L.TyList  _ typ) = extractType typ
+    extractType (L.TyParArray _ typ) = extractType typ
+    extractType (L.TyApp _ lTyp rTyp) = concatMap extractType [lTyp, rTyp]
+    extractType (L.TyParen _ typ) = extractType typ
+    extractType (L.TyInfix _ lTyp qname rTyp) =
+      extractQName qname ++ concatMap extractType [lTyp, rTyp]
+    extractType (L.TyKind _ typ knd) = extractType typ ++ extractKind knd
+    extractType (L.TyPromoted _ promoted) = extractPromoted promoted
+    extractType (L.TyEquals _ lTyp rTyp) = concatMap extractType [lTyp, rTyp]
+    extractType (L.TySplice _ splice) = extractSplice splice
+    extractType (L.TyBang _ _bangTyp typ) = extractType typ
+
+    extractContext (L.CxSingle _ asst) = extractAsst asst
+    extractContext (L.CxTuple _ assts) = concatMap extractAsst assts
+    extractContext (L.CxEmpty _) = []
+
+    extractAsst (L.ClassA _ qname typs) = extractQName qname ++ concatMap extractType typs
+    extractAsst (L.VarA _ name) = extractName name
+    extractAsst (L.InfixA _ lTyp qname rTyp) = extractQName qname ++ concatMap extractType [lTyp, rTyp]
+    extractAsst (L.IParam _ _ipname typ) = extractType typ
+    extractAsst (L.EqualP _ lTyp rTyp) = concatMap extractType [lTyp, rTyp]
+    extractAsst (L.ParenA _ asst) = extractAsst asst
+    
+    extractKind (L.KindStar _) = []
+    extractKind (L.KindBang _) = []
+    extractKind (L.KindFn _ lKnd rKnd) = concatMap extractKind [lKnd, rKnd]
+    extractKind (L.KindParen _ knd) = extractKind knd
+    extractKind (L.KindVar _ _qname) = [] -- NOT CONSIDERING NAMES OF VARIABLES
+    extractKind (L.KindApp _ lKnd rKnd) = concatMap extractKind [lKnd, rKnd]
+    extractKind (L.KindTuple _ knds) = concatMap extractKind knds
+    extractKind (L.KindList _ knds) = concatMap extractKind knds
+    
+    extractPromoted (L.PromotedInteger _ _int _str) = []
+    extractPromoted (L.PromotedString _ _str1 _str2) = []
+    extractPromoted (L.PromotedCon _ _b qname) = extractQName qname
+    extractPromoted (L.PromotedList _ _b promoteds) = concatMap extractPromoted promoteds
+    extractPromoted (L.PromotedTuple _ promoteds) = concatMap extractPromoted promoteds
+    extractPromoted (L.PromotedUnit _) = []
 
     extractQualConDecl (L.QualConDecl _ _ _ (L.ConDecl _ name _)) =
       extractName name
@@ -248,7 +279,7 @@ thingMembers (L.Module _ _ _ _ decls) name = concatMap extract decls
     nameOfHead _ = Nothing
 thingMembers _ _ = []
 
-modExports :: Database -> String -> Map.Map String Defn
+modExports :: Database -> String -> Map.Map String [Defn]
 modExports db modname = case Map.lookup modname db of
     Nothing -> Map.empty
     Just mod' -> Map.filterWithKey (\k _ -> exported mod' k) (localDecls mod')
@@ -274,14 +305,14 @@ exported mod'@(L.Module _
     matchesCName _ _ = False
 exported _ _ = True
 
-moduleScope :: Database -> L.Module L.SrcSpanInfo -> Map.Map String Defn
+moduleScope :: Database -> L.Module L.SrcSpanInfo -> Map.Map String [Defn]
 moduleScope db mod'@(L.Module _ modhead _ imports _) =
   Map.unions $ moduleItself : localDecls mod' : map extractImport imports
     where
       moduleItself = moduleDecl modhead
 
       moduleDecl (Just (L.ModuleHead l (L.ModuleName _ name) _ _)) =
-        Map.singleton name (getLoc l)
+        Map.singleton name [(getLoc l)]
       moduleDecl _ = Map.empty
 
       extractImport decl@(L.ImportDecl { L.importModule = L.ModuleName _ name
@@ -331,20 +362,23 @@ moduleScope db mod'@(L.Module _ modhead _ imports _) =
 
 moduleScope _ _ = Map.empty
 
-makeVimTags :: FilePath -> Map.Map String Defn -> LineInfo -> IO [String]
+makeVimTags :: FilePath -> Map.Map String [Defn] -> LineInfo -> IO [String]
 makeVimTags refFile m _ = pure $ map (makeTag refFile) (Map.assocs m)
   where
-    makeTag refFile' (name, Defn file line _) =
+    makeTag refFile' (name, defs) =  (unlines (map (makeTagLine refFile' name) (init defs))) ++ (makeTagLine refFile' name (last defs))
+    makeTagLine refFile' name (Defn file line _) = 
       name ++ "\t" ++ file ++ "\t" ++ show line ++ ";\"\t" ++ "file:" ++
       refFile'
 
-makeEmacsTags :: FilePath -> Map.Map String Defn -> LineInfo -> IO [String]
+makeEmacsTags :: FilePath -> Map.Map String [Defn] -> LineInfo -> IO [String]
 makeEmacsTags refFile m li = do
     tags <- mapM (makeTag refFile) (Map.assocs m)
+    let tagsNewline = map (\s -> s ++ "\n") (init tags) ++ [(last tags)]
     let tagsLen = show (sum $ map length tags)
-    return $ "\x0c":(refFile ++ "," ++ tagsLen):tags
+    return $ "\x0c":(refFile ++ "," ++ tagsLen):tagsNewline
   where
-    makeTag _ (name, Defn file line ecol) = do
+    makeTag _ (name, defs) = concatMapM (makeTagLine refFile name) defs    
+    makeTagLine _ name (Defn file line ecol) = do
       ms <- catch (evaluate $ li Map.! file) $ \(ErrorCall _) -> do
         hPutStrLn stderr $ "hothasktags: couldn't find '" ++ file ++ "'"
         exitFailure

@@ -39,6 +39,7 @@ executable hothasktags
         haskell-src-exts >= 1.14,
         cpphs >= 1.11 && < 1.20,
         optparse-applicative,
-        split
+        split,
+        extra
     main-is: Main.hs
     ghc-options: -W
