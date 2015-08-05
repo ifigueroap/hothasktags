@@ -15,6 +15,7 @@ import qualified Data.Array.Unboxed as A
 import Data.List (sort)
 import Data.Maybe (fromMaybe, catMaybes, maybeToList)
 import Data.List.Split (endBy)
+import Prelude hiding (exp)
 
 type Database = Map.Map String (L.Module L.SrcSpanInfo)
 type LineInfo = Map.Map FilePath (A.Array Int (HandlePosition, String))
@@ -67,9 +68,9 @@ localDecls (L.Module _ _ _ _ decls) = Map.fromList $ concatMap extract decls
     extractPat _ = []
 
     -- TODO: IMPLEMENT
-    extractMatch (L.Match _ name pats rhs maybeBinds) =
+    extractMatch (L.Match _ _ pats rhs maybeBinds) =
       concatMap extractPat pats ++ extractRhs rhs ++ concatMap extractBinds (maybeToList maybeBinds)
-    extractMatch (L.InfixMatch _ pat name pats rhs maybeBinds) =
+    extractMatch (L.InfixMatch _ pat _ pats rhs maybeBinds) =
       concatMap extractPat ([pat] ++ pats) ++ extractRhs rhs ++ concatMap extractBinds (maybeToList maybeBinds)
 
     extractRhs (L.UnGuardedRhs _ exp) = extractExp exp
@@ -80,10 +81,10 @@ localDecls (L.Module _ _ _ _ decls) = Map.fromList $ concatMap extract decls
     extractExp(L.App _ lExp rExp) = concatMap extractExp [lExp, rExp]
     extractExp(L.NegApp _ exp) = extractExp exp
     extractExp(L.Var _ qname) = extractQName qname
-    extractExp(L.IPVar _ ipname) = [] -- NOT CONSIDERING PARAMETER NAMES
+    extractExp(L.IPVar _ _ipname) = [] -- NOT CONSIDERING PARAMETER NAMES
     extractExp(L.Con _ qname) = extractQName qname
     
-    extractExp(L.Lit _ lit) = []
+    extractExp(L.Lit _ _lit) = []
     extractExp(L.Lambda _ pats exp) = concatMap extractPat pats ++ extractExp exp
     extractExp(L.Let _ binds exp) = extractBinds binds ++ extractExp exp
     extractExp(L.If _ cExp tExp eExp) = concatMap extractExp [cExp, tExp, eExp]
@@ -111,19 +112,20 @@ localDecls (L.Module _ _ _ _ decls) = Map.fromList $ concatMap extract decls
     extractExp(L.TypQuote _ qname) = extractQName qname
     extractExp(L.BracketExp _ bracket) = extractBracket bracket
     extractExp(L.SpliceExp _ splice) = extractSplice splice
-    extractExp(L.QuasiQuote _ str1 str2) = [] -- NOT CONSIDERING TEMPLATE QUASI-QUOTES
+    extractExp(L.QuasiQuote _ _str1 _str2) = [] -- NOT CONSIDERING TEMPLATE QUASI-QUOTES
 
     -- XML
-    extractExp(L.XTag _ xname xattrs maybeExp exps) = concatMap extractExp (maybeToList maybeExp) ++ concatMap extractExp exps
-    extractExp(L.XETag _ xname xattrs maybeExp) = concatMap extractExp (maybeToList maybeExp)
-    extractExp(L.XPcdata _ str) = []
+    extractExp(L.XTag _ _xname _xattrs maybeExp exps) =
+      concatMap extractExp (maybeToList maybeExp) ++ concatMap extractExp exps
+    extractExp(L.XETag _ _xname _xattrs maybeExp) = concatMap extractExp (maybeToList maybeExp)
+    extractExp(L.XPcdata _ _str) = []
     extractExp(L.XExpTag _ exp) = extractExp exp
     extractExp(L.XChildTag _ exps) = concatMap extractExp exps
 
     -- Pragmas
-    extractExp(L.CorePragma _ str exp) = extractExp exp                
-    extractExp(L.SCCPragma  _ str exp) = extractExp exp
-    extractExp(L.GenPragma  _ str intPair1 intPair2 exp) = extractExp exp
+    extractExp(L.CorePragma _ _str exp) = extractExp exp                
+    extractExp(L.SCCPragma  _ _str exp) = extractExp exp
+    extractExp(L.GenPragma  _ _str _intPair1 _intPair2 exp) = extractExp exp
 
     -- Arrows
     extractExp(L.Proc _ pat exp) = extractPat pat ++ extractExp exp
@@ -134,10 +136,10 @@ localDecls (L.Module _ _ _ _ decls) = Map.fromList $ concatMap extract decls
 
     extractGRhs (L.GuardedRhs _ stmts exp) = concatMap extractStmt stmts ++ extractExp exp
 
-    extractBinds (L.BDecls _ decls) = concatMap extract decls
+    extractBinds (L.BDecls _ _decls) = concatMap extract _decls
     extractBinds (L.IPBinds _ ipbinds) = concatMap extractIPBind ipbinds
 
-    extractIPBind (L.IPBind _ ipname exp) = extractExp exp
+    extractIPBind (L.IPBind _ _ipname exp) = extractExp exp
 
     extractAlt (L.Alt _ pat rhs maybeBinds) =
       extractPat pat ++ extractRhs rhs ++ concatMap extractBinds (maybeToList maybeBinds)
@@ -164,9 +166,9 @@ localDecls (L.Module _ _ _ _ decls) = Map.fromList $ concatMap extract decls
     extractBracket (L.ExpBracket _ exp) = extractExp exp
     extractBracket (L.PatBracket _ pat) = extractPat pat
     extractBracket (L.TypeBracket _ typ) = extractType typ
-    extractBracket (L.DeclBracket _ decls) = concatMap extract decls
+    extractBracket (L.DeclBracket _ _decls) = concatMap extract _decls
 
-    extractSplice (L.IdSplice _ str) = []
+    extractSplice (L.IdSplice _ _str) = []
     extractSplice (L.ParenSplice _ exp) = extractExp exp    
 
     -- TODO: IMPLEMENT
@@ -197,7 +199,7 @@ localDecls (L.Module _ _ _ _ decls) = Map.fromList $ concatMap extract decls
     extractClassDecl (L.ClsTyFam _ hd _) = extractDeclHead hd
     extractClassDecl _ = []
 
-    extractQName (L.Qual _ modname name) = extractName name
+    extractQName (L.Qual _ _modname name) = extractName name
     extractQName (L.UnQual _ name) = extractName name
     extractQName (L.Special _ _) = [] -- NO SPECIAL CONSTRUCTORS CONSIDERED AS TERMS
 
