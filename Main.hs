@@ -55,29 +55,103 @@ localDecls (L.Module _ _ _ _ decls) = Map.fromList $ groupSort $ concatMap extra
 
     -- Foreign Functions
     extract (L.ForImp _ _ _ _ name _) = extractName name
-    extract (L.ForExp _ _ _ name typ) = []
+    extract (L.ForExp _ _ _ name typ) = extractName name ++ extractType typ
 
-    extract (L.ClosedTypeFamDecl _ _ _ _) = [] --
-    extract (L.TypeInsDecl _ _ _) = [] --
-    extract (L.DataInsDecl _ _ _ _ _) = [] --
-    extract (L.GDataInsDecl _ _ _ _ _ _) = [] --
-    extract (L.InstDecl _ _ _ _) = []
-    extract (L.DerivDecl _ _ _) = []
-    extract (L.InfixDecl _ _ _ _) = []
-    extract (L.DefaultDecl _ _) = []
-    extract (L.SpliceDecl _ _) = []
-    extract (L.RulePragmaDecl _ _) = []
-    extract (L.DeprPragmaDecl _ _) = []
-    extract (L.WarnPragmaDecl _ _) = []
-    extract (L.InlineSig _ _ _ _) = []
-    extract (L.InlineConlikeSig _ _ _) = []
-    extract (L.SpecSig _ _ _ _) = []
-    extract (L.SpecInlineSig _ _ _ _ _) = []
-    extract (L.InstSig _ _) = []
-    extract (L.AnnPragma _ _) = []
-    extract (L.MinimalPragma _ _) = []
+    -- Type families declarations
+    extract (L.ClosedTypeFamDecl _ decHead maybeKnd typeqs) =
+      extractDeclHead decHead ++ concatMap extractKind (maybeToList maybeKnd)
+      ++ concatMap extractTypeEq typeqs
+
+    extract (L.TypeInsDecl _ typ1 typ2) = concatMap extractType [typ1, typ2]
+
+    extract (L.DataInsDecl _ _ typ qualConDecls maybeDeriving) =
+      extractType typ ++ concatMap extractQualConDecl qualConDecls
+      ++ concatMap extractDeriving (maybeToList maybeDeriving)
+
+    extract (L.GDataInsDecl _ _ typ maybeKind gadtDecls maybeDeriving) =
+      extractType typ ++ concatMap extractKind (maybeToList maybeKind)
+      ++ concatMap extractGadtDecl gadtDecls
+      ++ concatMap extractDeriving (maybeToList maybeDeriving)      
+
+    extract (L.InstDecl _ _ instRule maybeInstDecls) =
+      extractInstRule instRule
+      ++ concatMap extractInstDeclData (concat (maybeToList maybeInstDecls))
+      
+    extract (L.DerivDecl _ _ instRule) = extractInstRule instRule
+
+    extract (L.InfixDecl _ _ _ ops) = concatMap extractOp ops
+
+    extract (L.DefaultDecl _ typs) = concatMap extractType typs
+
+    extract (L.SpliceDecl _ exp) = extractExp exp
+
+    extract (L.RulePragmaDecl _ rules) = concatMap extractRule rules
+
+    extract (L.DeprPragmaDecl _ deprs) =
+      concatMap (\(names, _str) -> concatMap extractName names) deprs
+
+    extract (L.WarnPragmaDecl _ warns) =
+      concatMap (\(names, _str) -> concatMap extractName names) warns
+
+    extract (L.InlineSig _ _ _ qname) = extractQName qname
+
+    extract (L.InlineConlikeSig _ _ qname) = extractQName qname
+
+    extract (L.SpecSig _ _ qname typs) = extractQName qname ++ concatMap extractType typs
+
+    extract (L.SpecInlineSig _ _ _ qname typs) = extractQName qname ++ concatMap extractType typs
+
+    extract (L.InstSig _ instRule) = extractInstRule instRule
+
+    extract (L.AnnPragma _ ann) = extractAnnotation ann
+
+    extract (L.MinimalPragma _ maybeBooleanFormula) =
+      concatMap extractBooleanFormula (maybeToList maybeBooleanFormula)
 
     ------------------------------------------------------------------------------
+    extractInstDeclData (L.InsDecl _ dec) = extract dec
+    extractInstDeclData (L.InsType _ typ1 typ2) = concatMap extractType [typ1, typ2]
+    extractInstDeclData (L.InsData _ _ typ qualConDecls maybeDeriving) =
+      extractType typ
+      ++ concatMap extractQualConDecl qualConDecls
+      ++ concatMap extractDeriving (maybeToList maybeDeriving)
+
+    extractInstDeclData (L.InsGData _ _ typ maybeKind gadtDecls maybeDeriving) =
+      extractType typ
+      ++ concatMap extractKind (maybeToList maybeKind)
+      ++ concatMap extractGadtDecl gadtDecls
+      ++ concatMap extractDeriving (maybeToList maybeDeriving)
+
+    extractTypeEq (L.TypeEqn _ typ1 typ2) = concatMap extractType [typ1, typ2]
+
+    extractDeriving (L.Deriving _ instrules) = concatMap extractInstRule instrules
+
+    extractInstRule (L.IRule _ _maybeTyVarBinds maybeContext instHead) =
+      concatMap extractContext (maybeToList maybeContext)
+      ++ extractInstHead instHead      
+
+    extractInstRule (L.IParen _ instrule) = extractInstRule instrule
+
+    extractInstHead (L.IHCon _ qname) = extractQName qname
+    extractInstHead (L.IHInfix _ typ qname) = extractType typ ++ extractQName qname
+    extractInstHead (L.IHParen _ instHead) = extractInstHead instHead
+    extractInstHead (L.IHApp _ instHead typ) = extractInstHead instHead ++ extractType typ
+
+    extractRule (L.Rule _ _ _ maybeRuleVars exp1 exp2) =
+      concatMap extractExp [exp1, exp2]
+      ++ concatMap extractRuleVar (concat (maybeToList maybeRuleVars))
+
+    extractRuleVar (L.RuleVar _ _name) = []
+    extractRuleVar (L.TypedRuleVar _ _name typ) = extractType typ
+
+    extractAnnotation (L.Ann _ name exp) = extractName name ++ extractExp exp
+    extractAnnotation (L.TypeAnn _ name exp) = extractName name ++ extractExp exp
+    extractAnnotation (L.ModuleAnn _ exp) = extractExp exp
+
+    extractBooleanFormula (L.VarFormula _ name) = extractName name
+    extractBooleanFormula (L.AndFormula _ formulas) = concatMap extractBooleanFormula formulas
+    extractBooleanFormula (L.OrFormula _ formulas) = concatMap extractBooleanFormula formulas
+    extractBooleanFormula (L.ParenFormula _ formula) = extractBooleanFormula formula
 
     extractDeclHead (L.DHead _ name) = extractName name
     extractDeclHead (L.DHInfix _ _ name) = extractName name
@@ -85,11 +159,11 @@ localDecls (L.Module _ _ _ _ decls) = Map.fromList $ groupSort $ concatMap extra
     extractDeclHead (L.DHApp _ head' _) = extractDeclHead head'
 
     extractPat (L.PVar _ _name) = [] --extractName name
-    extractPat (L.PApp _ _ pats) = concatMap extractPat pats
+    extractPat (L.PApp _ qname pats) = extractQName qname ++ concatMap extractPat pats
     extractPat (L.PTuple _ _ pats) = concatMap extractPat pats
     extractPat (L.PList _ pats) = concatMap extractPat pats
     extractPat (L.PParen _ pat) = extractPat pat
-    extractPat (L.PAsPat _ _name pat) = extractPat pat -- extractName name ++ extractPat pat -- @ patterns
+    extractPat (L.PAsPat _ _name pat) = extractPat pat 
     extractPat (L.PIrrPat _ pat) = extractPat pat
     extractPat (L.PatTypeSig _ pat typ) = extractPat pat ++ extractType typ
     extractPat (L.PBangPat _ pat) = extractPat pat
@@ -108,7 +182,6 @@ localDecls (L.Module _ _ _ _ decls) = Map.fromList $ groupSort $ concatMap extra
     extractPat (L.PXPatTag _ pat) = extractPat pat
     extractPat (L.PXRPats _ rpats) = concatMap extractRPat rpats
     extractPat (L.PQuasiQuote _ _str1 _str2) = []
-
     extractRPat (L.RPOp _ rpat _) = extractRPat rpat
     extractRPat (L.RPEither _ lrpat rrpat) = concatMap extractRPat [lrpat, rrpat]
     extractRPat (L.RPSeq _ rpats) = concatMap extractRPat rpats
@@ -122,7 +195,6 @@ localDecls (L.Module _ _ _ _ decls) = Map.fromList $ groupSort $ concatMap extra
     extractPatField (L.PFieldPun _ qname) = extractQName qname
     extractPatField (L.PFieldWildcard _) = []
 
-    -- TODO: IMPLEMENT
     extractMatch (L.Match _ _ pats rhs maybeBinds) =
       concatMap extractPat pats ++ extractRhs rhs ++ concatMap extractBinds (maybeToList maybeBinds)
     extractMatch (L.InfixMatch _ pat _ pats rhs maybeBinds) =
@@ -131,11 +203,14 @@ localDecls (L.Module _ _ _ _ decls) = Map.fromList $ groupSort $ concatMap extra
     extractRhs (L.UnGuardedRhs _ exp) = extractExp exp
     extractRhs (L.GuardedRhss _ grhs) = concatMap extractGRhs grhs
 
+    extractOp (L.VarOp _ _name) = []
+    extractOp (L.ConOp _ name) = extractName name
+
     -- EXTRACT NAMED-FUNCTIONS APPLICATIONS IN ALL EXPRESSIONS
     extractExp(L.InfixApp _ lExp qop rExp) = extractQOp qop ++ concatMap extractExp [lExp, rExp]
     extractExp(L.App _ lExp rExp) = concatMap extractExp [lExp, rExp]
     extractExp(L.NegApp _ exp) = extractExp exp
-    extractExp(L.Var _ qname) = extractQName qname
+    extractExp(L.Var _ _qname) = [] --extractQName qname
     extractExp(L.IPVar _ _ipname) = [] -- NOT CONSIDERING PARAMETER NAMES
     extractExp(L.Con _ qname) = extractQName qname    
     extractExp(L.Lit _ _lit) = []
@@ -168,7 +243,7 @@ localDecls (L.Module _ _ _ _ decls) = Map.fromList $ groupSort $ concatMap extra
     extractExp(L.ExpTypeSig _ exp typ) = extractExp exp ++ extractType typ
 
     -- Template Haskell
-    extractExp(L.VarQuote _ qname) = extractQName qname
+    extractExp(L.VarQuote _ _qname) = [] -- extractQName qname
     extractExp(L.TypQuote _ qname) = extractQName qname
     extractExp(L.BracketExp _ bracket) = extractBracket bracket
     extractExp(L.SpliceExp _ splice) = extractSplice splice
@@ -303,8 +378,7 @@ localDecls (L.Module _ _ _ _ decls) = Map.fromList $ groupSort $ concatMap extra
 localDecls _ = Map.empty
 
 getLoc :: L.SrcSpanInfo -> Defn
-getLoc (L.SrcSpanInfo (L.SrcSpan file line _ _ ecol) _) =
-  Defn file line ecol
+getLoc (L.SrcSpanInfo (L.SrcSpan file line _ _ ecol) _) = Defn file line ecol
 
 thingMembers :: L.Module L.SrcSpanInfo -> String -> [String]
 thingMembers (L.Module _ _ _ _ decls) name = concatMap extract decls
