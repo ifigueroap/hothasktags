@@ -1,4 +1,5 @@
 {-# LANGUAGE PatternGuards #-}
+{-# LANGUAGE PackageImports #-}
 
 module Main where
 
@@ -18,6 +19,8 @@ import Data.Maybe (fromMaybe, catMaybes, maybeToList)
 import Data.List.Split (endBy)
 import Data.List.Extra (groupSort)
 import Prelude hiding (exp)
+import System.FilePath.Find
+import "Glob" System.FilePath.Glob
 
 type Database = Map.Map String (L.Module L.SrcSpanInfo)
 type LineInfo = Map.Map FilePath (A.Array Int (HandlePosition, String))
@@ -427,8 +430,8 @@ exported mod'@(L.Module _
                       (Just (L.ExportSpecList _ specs)))) _ _ _) name =
     any (matchesSpec name) specs
   where
-    matchesSpec nm (L.EVar _ _ (L.UnQual _ (L.Ident _ name'))) = nm == name'
-    matchesSpec nm (L.EAbs _ (L.UnQual _ (L.Ident _ name'))) = nm == name'
+    matchesSpec nm (L.EVar _ (L.UnQual _ (L.Ident _ name'))) = nm == name'
+    matchesSpec nm (L.EAbs _ _ (L.UnQual _ (L.Ident _ name'))) = nm == name'
     matchesSpec nm (L.EThingAll _ (L.UnQual _ (L.Ident _ name'))) =
       nm == name' || (nm `elem` thingMembers mod' name')
     matchesSpec nm (L.EThingWith _ (L.UnQual _ (L.Ident _ name')) cnames) =
@@ -485,8 +488,8 @@ moduleScope db mod'@(L.Module _ modhead _ imports _) =
 
           normalExports = modExports db name
 
-          specName (L.IVar _ _ (L.Ident _ name')) = [name']
-          specName (L.IAbs _ (L.Ident _ name')) = [name']
+          specName (L.IVar _ (L.Ident _ name')) = [name']
+          specName (L.IAbs _ _ (L.Ident _ name')) = [name']
           -- XXX incorrect, need its member names
           specName (L.IThingAll _ (L.Ident _ name')) = [name']
           specName (L.IThingWith _ (L.Ident _ name') cnames) =
@@ -574,6 +577,7 @@ makeDatabase exts conf =
       { L.parseFilename = filename
       , L.extensions = exts
       , L.ignoreLanguagePragmas = False
+      , L.ignoreFunctionArity = True
       , L.ignoreLinePragmas = False
       , L.fixities = Nothing
       , L.baseLanguage = L.Haskell2010
@@ -590,6 +594,8 @@ data HotHasktags = HotHasktags
     { hhLanguage, hhDefine, hhInclude, hhCpphs :: [String]
     , hhOutput :: Maybe FilePath
     , hhTagstype :: TagsType
+    , hhRecurse :: Bool
+    , hhExcludes :: [String]
     , hhSplitOnNUL :: Bool
     , hhFiles :: [FilePath]
     }
@@ -632,6 +638,15 @@ optParser = HotHasktags
           ( short 'e'
          <> help "Emit Emacs tags" )
     <*> switch
+        ( short 'R'
+       <> long "recursive"
+       <> help "Recurse into directories")
+    <*> many (strOption
+        ( short 'x'
+       <> long "exclude"
+       <> metavar "PATTERN"
+       <> help "Files and directories to exclude"))
+    <*> switch
         ( short '0'
        <> long "null"
        <> help "Split stdin on NUL instead of newline" )
@@ -659,6 +674,14 @@ stdinFileList onNull = liftM splitter getContents
   where
     splitter = if onNull then endBy "\0" else lines
 
+recursiveFiles :: [FilePath] -> [String] -> IO [FilePath]
+recursiveFiles files pats = concat <$> mapM findFiles files
+  where
+    findFiles = find excludes (extension ==? ".hs" &&? excludes)
+    pats' = map compile pats -- filemanip's globbing doesnt work properly
+    excludes = foldr (\pat b -> b ||? globMatch pat filePath) (return False) pats' ==? False
+    globMatch pat s = liftM (match pat) s
+
 main :: IO ()
 main = do
     let opts = info (helper <*> optParser)
@@ -676,11 +699,17 @@ main = do
       [] -> liftM (\x -> conf { hhFiles = x })
                   $ stdinFileList (hhSplitOnNUL conf)
       _ -> return conf
-    lineInfo <- if hhTagstype conf' == EmacsTags
-                then emacsLineInfo $ hhFiles conf'
+    -- filter empty strings
+    let conf'' = conf' { hhFiles = filter (/= "") $ hhFiles conf' }
+    conf''' <- if hhRecurse conf''
+              then recursiveFiles (hhFiles conf'') (hhExcludes conf'')
+                   >>= \fs -> return (conf'' { hhFiles = fs })
+              else return conf''
+    lineInfo <- if hhTagstype conf''' == EmacsTags
+                then emacsLineInfo $ hhFiles conf'''
                 else return Map.empty
-    database <- makeDatabase exts conf'
-    let (fMakeTags, fSort) = if hhTagstype conf' == EmacsTags
+    database <- makeDatabase exts conf'''
+    let (fMakeTags, fSort) = if hhTagstype conf''' == EmacsTags
                              then (makeEmacsTags, id)
                              else (makeVimTags, sort)
         makeTags x = fMakeTags (moduleFile x)
@@ -690,12 +719,12 @@ main = do
       ts <- mapM makeTags $ Map.elems database
       return (fSort $ concat ts)
 
-    handle <- case hhOutput conf' of
+    handle <- case hhOutput conf''' of
                 Nothing -> return stdout
                 Just file -> openFile file WriteMode
 
     mapM_ (hPutStrLn handle) ts
 
-    case hhOutput conf' of
+    case hhOutput conf''' of
       Nothing -> return ()
       _ -> hClose handle
