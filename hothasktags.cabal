@@ -39,7 +39,7 @@ executable hothasktags
         filemanip,
         Glob,
         haskell-src-exts >= 1.17 && < 1.18,
-        cpphs >= 1.11 && < 1.21,
+        cpphs >= 1.20 && < 1.21,
         optparse-applicative,
         split,
         extra
