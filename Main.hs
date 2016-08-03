@@ -33,6 +33,7 @@ localDecls (L.Module _ _ _ _ decls) = Map.fromList $ groupSort $ concatMap extra
     where
       -- TODO: RE-CHECK EVERY KIND OF DECLARATION
       -- TODO: CHECK OTHER KINDS OF DECLARATIONS: CLASS, TYPE, TYPEFAM, ETC...
+    -- extract :: L.Decl l -> [Defn]
     extract (L.TypeDecl _ hd _) = extractDeclHead hd
     extract (L.TypeFamDecl _ hd _) = extractDeclHead hd
     extract (L.DataDecl _ _ _ hd decls' _) =
@@ -55,6 +56,16 @@ localDecls (L.Module _ _ _ _ decls) = Map.fromList $ groupSort $ concatMap extra
 
     -- review
     extract (L.PatBind _ pat _ _) = extractPat pat
+
+    -- PatSynSig l (Name l) (Maybe [TyVarBind l]) (Maybe (Context l)) (Maybe (Context l)) (Type l)
+    extract (L.PatSynSig _ name _ maybeContext1 maybeContext2 typ) =
+      extractName name ++ extractType typ ++ concatMap extractContext (maybeToList maybeContext1) ++ concatMap extractContext (maybeToList maybeContext2)
+
+    -- PatSyn l (Pat l) (Pat l) (PatternSynDirection l)
+    extract (L.PatSyn _ pat1 pat2 _) = extractPat pat1 ++ extractPat pat2
+
+    -- RoleAnnotDecl l (QName l) [Role l]
+    extract (L.RoleAnnotDecl _ qname _) = extractQName qname
 
     -- Foreign Functions
     extract (L.ForImp _ _ _ _ name _) = extractName name
@@ -244,6 +255,7 @@ localDecls (L.Module _ _ _ _ decls) = Map.fromList $ groupSort $ concatMap extra
     extractExp(L.ListComp _ exp qualStmts) = extractExp exp ++ concatMap extractQualStmt qualStmts
     extractExp(L.ParComp  _ exp qualStmts) = extractExp exp ++ concatMap extractQualStmt (concat qualStmts)
     extractExp(L.ExpTypeSig _ exp typ) = extractExp exp ++ extractType typ
+    extractExp(L.ExprHole _) = [] 
 
     -- Template Haskell
     extractExp(L.VarQuote _ _qname) = [] -- extractQName qname
@@ -310,15 +322,15 @@ localDecls (L.Module _ _ _ _ decls) = Map.fromList $ groupSort $ concatMap extra
     extractSplice (L.ParenSplice _ exp) = extractExp exp    
 
     -- TODO: IMPLEMENT
-    extractType (L.TyVar _ _name) = [] -- NOT CONSIDERING NAMES OF TYPE VARIABLES
-    extractType (L.TyCon _ qname) = extractQName qname
     extractType (L.TyForall _ _maybeTyVarBinds maybeContext typ) =
       concatMap extractContext (maybeToList maybeContext) ++ extractType typ
     extractType (L.TyFun _ argTyp resTyp) = concatMap extractType [argTyp, resTyp]
     extractType (L.TyTuple _ _ typs) = concatMap extractType typs
     extractType (L.TyList  _ typ) = extractType typ
     extractType (L.TyParArray _ typ) = extractType typ
-    extractType (L.TyApp _ lTyp rTyp) = concatMap extractType [lTyp, rTyp]
+    extractType (L.TyApp _ lTyp rTyp) = concatMap extractType [lTyp, rTyp]    
+    extractType (L.TyVar _ _name) = [] -- NOT CONSIDERING NAMES OF TYPE VARIABLES
+    extractType (L.TyCon _ qname) = extractQName qname    
     extractType (L.TyParen _ typ) = extractType typ
     extractType (L.TyInfix _ lTyp qname rTyp) =
       extractQName qname ++ concatMap extractType [lTyp, rTyp]
@@ -327,32 +339,42 @@ localDecls (L.Module _ _ _ _ decls) = Map.fromList $ groupSort $ concatMap extra
     extractType (L.TyEquals _ lTyp rTyp) = concatMap extractType [lTyp, rTyp]
     extractType (L.TySplice _ splice) = extractSplice splice
     extractType (L.TyBang _ _bangTyp typ) = extractType typ
+    extractType (L.TyWildCard _ (Just name)) =  extractName name
+    extractType (L.TyWildCard _ Nothing) =  []
 
     extractContext (L.CxSingle _ asst) = extractAsst asst
     extractContext (L.CxTuple _ assts) = concatMap extractAsst assts
     extractContext (L.CxEmpty _) = []
 
-    extractAsst (L.ClassA _ qname typs) = extractQName qname ++ concatMap extractType typs
-    extractAsst (L.VarA _ name) = extractName name
-    extractAsst (L.InfixA _ lTyp qname rTyp) = extractQName qname ++ concatMap extractType [lTyp, rTyp]
+    extractAsst (L.ClassA _ qname typs) =
+      extractQName qname ++ concatMap extractType typs   
+    extractAsst (L.AppA _ name typs) =
+      extractName name ++ concatMap extractType typs
+    -- extractAsst (L.VarA _ name) = extractName name    
+    extractAsst (L.InfixA _ lTyp qname rTyp) =
+      extractQName qname ++ concatMap extractType [lTyp, rTyp]
     extractAsst (L.IParam _ _ipname typ) = extractType typ
     extractAsst (L.EqualP _ lTyp rTyp) = concatMap extractType [lTyp, rTyp]
     extractAsst (L.ParenA _ asst) = extractAsst asst
-    
+    extractAsst (L.WildCardA _ (Just name)) = extractName name
+    extractAsst (L.WildCardA _ Nothing) = []
+
+    extractKind :: L.Kind l -> [(String, Defn)]
     extractKind (L.KindStar _) = []
-    extractKind (L.KindBang _) = []
+    -- extractKind (L.KindBang _) = []
     extractKind (L.KindFn _ lKnd rKnd) = concatMap extractKind [lKnd, rKnd]
     extractKind (L.KindParen _ knd) = extractKind knd
     extractKind (L.KindVar _ _qname) = [] -- NOT CONSIDERING NAMES OF VARIABLES
     extractKind (L.KindApp _ lKnd rKnd) = concatMap extractKind [lKnd, rKnd]
     extractKind (L.KindTuple _ knds) = concatMap extractKind knds
-    extractKind (L.KindList _ knds) = concatMap extractKind knds
-    
+    extractKind (L.KindList _ knd) = extractKind knd -- concatMap extractKind knds
+
+    extractPromoted :: L.Promoted L.SrcSpanInfo -> [(String, Defn)]
     extractPromoted (L.PromotedInteger _ _int _str) = []
     extractPromoted (L.PromotedString _ _str1 _str2) = []
     extractPromoted (L.PromotedCon _ _b qname) = extractQName qname
-    extractPromoted (L.PromotedList _ _b promoteds) = concatMap extractPromoted promoteds
-    extractPromoted (L.PromotedTuple _ promoteds) = concatMap extractPromoted promoteds
+    extractPromoted (L.PromotedList _ _b typs) = concatMap extractType typs
+    extractPromoted (L.PromotedTuple _ typs) = concatMap extractType typs
     extractPromoted (L.PromotedUnit _) = []
 
     extractQualConDecl (L.QualConDecl _ _ _ (L.ConDecl _ name typs)) =
@@ -365,16 +387,19 @@ localDecls (L.Module _ _ _ _ decls) = Map.fromList $ groupSort $ concatMap extra
     extractFieldDecl (L.FieldDecl _ names _) = concatMap extractName names
     extractGadtDecl (L.GadtDecl _ name _ _) = extractName name
 
+    extractClassDecl :: L.ClassDecl L.SrcSpanInfo -> [(String, Defn)]
     extractClassDecl (L.ClsDecl _ decl) = extract decl
     extractClassDecl (L.ClsDataFam _ _ hd _) = extractDeclHead hd
     extractClassDecl (L.ClsTyFam _ hd _) = extractDeclHead hd
     extractClassDecl (L.ClsTyDef _ typ1 typ2) = concatMap extractType [typ1, typ2]
     extractClassDecl (L.ClsDefSig _ name typ) = extractName name ++ extractType typ
 
+    extractQName :: L.QName L.SrcSpanInfo -> [(String, Defn)]
     extractQName (L.Qual _ _modname name) = extractName name
     extractQName (L.UnQual _ name) = extractName name
     extractQName (L.Special _ _) = [] -- NO SPECIAL CONSTRUCTORS CONSIDERED AS TERMS
 
+    extractName :: L.Name L.SrcSpanInfo -> [(String, Defn)]
     extractName (L.Ident loc name) = [(name, getLoc loc)]
     extractName (L.Symbol loc name) = [(name, getLoc loc)]
 
